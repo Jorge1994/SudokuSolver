@@ -11,6 +11,30 @@ import math
 
 SIZE = 9
 
+def get_connected_component (image):
+    image = image.astype('uint8')
+    nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(image, connectivity=8)
+    sizes = stats[:, -1]
+    
+    if(len(sizes) <= 1):
+        blank_image = np.zeros(image.shape)
+        blank_image.fill(255)
+        return blank_image
+    
+    max_label = 1
+    max_size = sizes[1]
+    
+    for i in range(2, nb_components):
+        if sizes[i] > max_size:
+            max_label = i
+            max_size = sizes[i]
+
+    img2 = np.zeros(output.shape)
+    img2.fill(255)
+    img2[output == max_label] = 0
+    
+    return img2
+
 def angle_between_two_vectors(vector1, vector2):
     unit_vector_1 = vector1 / np.linalg.norm(vector1)
     unit_vector_2 = vector2 / np.linalg.norm(vector2)
@@ -131,6 +155,15 @@ def check_if_is_square(rect):
     
         
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720) 
+
+grid = []
+for i in range(SIZE):
+    row = []
+    for j in range(SIZE):
+        row.append(0)
+        grid.append(row)
 
 while True:
     ret, frame = cap.read()
@@ -167,7 +200,7 @@ while True:
                 cv2.imshow("Sudoku-Original", warped)
                 warped_copy = warped.copy()
                 warped_copy = cv2.cvtColor(warped_copy, cv2.COLOR_BGR2GRAY)
-                warped_copy = cv2.GaussianBlur(warped_copy, (5,5), 0)
+                warped_copy = cv2.GaussianBlur(warped_copy, (7,7), 0)
                 warped_copy = cv2.adaptiveThreshold(warped_copy, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2) 
                 warped_copy = cv2.bitwise_not(warped_copy)
                 cv2.imshow("Sudoku-Processed", warped_copy)
@@ -175,14 +208,55 @@ while True:
                 cell_height = warped_copy.shape[0] // 9
                 cell_width = warped_copy.shape[1] // 9
                 
+                offset_width = math.floor(cell_width / 10)    
+                offset_height = math.floor(cell_height / 10)
+                whites= 0
+                        
                 for i in range(SIZE):
                     for j in range(SIZE):
-                        cell = warped_copy[cell_height*i:cell_height*(i+1), cell_width*j:cell_width*(j+1)]
-                        print(cell.shape)
+                        cell = warped_copy[cell_height*i+offset_height:cell_height*(i+1)-offset_height, cell_width*j+offset_width:cell_width*(j+1)-offset_width] 
+                        ratio = 0.6        
+                        # Top
+                        while np.sum(cell[0]) <= (1-ratio) * cell.shape[1] * 255:
+                            cell = cell[1:]
+                        # Bottom
+                        while np.sum(cell[:,-1]) <= (1-ratio) * cell.shape[1] * 255:
+                            cell = np.delete(cell, -1, 1)
+                        # Left
+                        while np.sum(cell[:,0]) <= (1-ratio) * cell.shape[0] * 255:
+                            cell = np.delete(cell, 0, 1)
+                        # Right
+                        while np.sum(cell[-1]) <= (1-ratio) * cell.shape[0] * 255:
+                            cell = cell[:-1] 
+                        
+                        cell = cv2.bitwise_not(cell)
+                        cell = get_connected_component(cell)
+                        digit_pic_size = 28
+                        cell_crop = cv2.resize(cell, (digit_pic_size,digit_pic_size))
+                        cell_crop = cv2.dilate(cell_crop, np.ones((3, 3), np.uint8))
+                        white_pixels = cv2.countNonZero(cell_crop)
+                        ratio = white_pixels / float(cell_crop.shape[0]*cell_crop.shape[1])
+                        x_pos = cell_width*i + cell_width/2
+                        y_pos = cell_height*j + cell_height/2
+                        
+                        print(ratio)
+                        #print(ratio)
+                        if ratio > 0.9:
+                            grid[i][j] = 0
+                            whites = whites+1
+                            cv2.circle(warped,(int(x_pos),int(y_pos)), 5,(0,0,255),5)
+                            continue
+                        else:
+                            grid[i][j] = 1
+                            cv2.circle(warped,(int(x_pos),int(y_pos)), 5,(0,255,0),5)
                         if cell.shape[0] > 0 and cell.shape[1] > 0:
                             k = i + j
-                            cv2.imshow(str(k), cell)
-                        
+                            cv2.imshow(str(k), cell_crop)
+                cv2.imshow("white", warped)
+                #print(whites)
+                #print(grid)
+                #print("\n")
+                #print("=======")
                         
               
             cv2.circle(frame, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
