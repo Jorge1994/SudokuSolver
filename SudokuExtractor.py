@@ -354,7 +354,7 @@ def check_if_is_square(rect):
     return True
 
 def create_grid():
-    """ Create an empty 9x9 matrix (filled with 0) """
+    """ Create an empty 9x9 matrix/grid (filled with 0) """
     grid = []
     for i in range(SIZE):
         row = []
@@ -376,11 +376,9 @@ def draw_solution_on_image(img, solved, unsolved):
                 y_pos = Y*j + Y/2
                 cv2.putText(img, str(num), (int(y_pos)-5,int(x_pos)+10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2) 
     
-
 def show_digits(digits, colour=255):
-    """Shows list of 81 extracted digits in a grid format"""
+    """ Shows the 81 extracted digits in a matrix/grid format """
     rows = []
-    with_border = [cv2.copyMakeBorder(img.copy(), 1, 1, 1, 1, cv2.BORDER_CONSTANT, None, colour) for img in digits]
     for i in range(9):
         row = np.concatenate(digits[i * 9:((i + 1) * 9)], axis=0)
         rows.append(row)
@@ -405,8 +403,6 @@ def test(frame, model, old_sudoku):
             corners = corners.reshape(4,2)
             rect = find_corners_locations(corners)
             if check_if_is_square(rect):
-                
-                # https://www.pyimagesearch.com/2014/08/25/4-point-opencv-getperspective-transform-example/
                 (tl, tr, br, bl) = rect
                 bottom_width = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
                 top_width = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
@@ -444,27 +440,17 @@ def test(frame, model, old_sudoku):
                 else:
                     return frame
                 
-                #for i in range(9):
-                  #  for j in range(9):
-                   #     print(grid[i])
-                    #    num = grid[i][j]
-                     #   X = warped_copy.shape[0]/9
-                      #  Y = warped_copy.shape[1]/9
-                       # x_pos = X*i + X/2
-                       # y_pos = Y*j + Y/2
-                       # cv2.putText(warped_copy, str(num), (int(y_pos)-5,int(x_pos)+10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2) 
-                
-                
-                
-                    
-                
                 result_sudoku = cv2.warpPerspective(warped_copy, M, (frame.shape[1], frame.shape[0])
                                         , flags=cv2.WARP_INVERSE_MAP)
                 result = np.where(result_sudoku.sum(axis=-1,keepdims=True)!=0, result_sudoku, frame)
+                
+                # Draw the 4 corners of the Sudoku puzzle
                 cv2.circle(result, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
                 cv2.circle(result, (rect[1][0], rect[1][1]), 5, (0,0,255), 5)
                 cv2.circle(result, (rect[2][0], rect[2][1]), 5, (0,0,255), 5)
                 cv2.circle(result, (rect[3][0], rect[3][1]), 5, (0,0,255), 5)
+                
+                # Draw the contour of the Sudoku puzzle
                 cv2.drawContours(result,[max_contour], 0,  (0,255,0), 3)
                 return result
             else:
