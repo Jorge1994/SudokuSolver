@@ -275,6 +275,16 @@ def find_corners_locations(corners):
     rect = rect.reshape(4,2)
     return rect
 
+def image_to_array(array):
+    grid = create_grid()
+    cv2.imshow("wewewewe",array[28:28+28, 28:28+28])
+    for i in range(9):
+        for j in range (9):
+            grid[i][j] = np.sum(array[i*28:i*28+28, j*28:j*28+28])
+    print(grid)
+    
+
+
 def check_if_is_square(rect):
     #   A------B
     #   |      |
@@ -312,21 +322,25 @@ cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720) 
 
-grid = []
-for i in range(SIZE):
-    row = []
-    for j in range(SIZE):
-        row.append(0)
+def create_grid():
+    grid = []
+    for i in range(SIZE):
+        row = []
+        for j in range(SIZE):
+            row.append(0)
         grid.append(row)
+    return grid
         
 def show_digits(digits, colour=255):
-	"""Shows list of 81 extracted digits in a grid format"""
-	rows = []
-	with_border = [cv2.copyMakeBorder(img.copy(), 1, 1, 1, 1, cv2.BORDER_CONSTANT, None, colour) for img in digits]
-	for i in range(9):
-		row = np.concatenate(with_border[i * 9:((i + 1) * 9)], axis=0)
-		rows.append(row)
-	show_image(np.concatenate(rows, axis=1))
+    """Shows list of 81 extracted digits in a grid format"""
+    rows = []
+    with_border = [cv2.copyMakeBorder(img.copy(), 1, 1, 1, 1, cv2.BORDER_CONSTANT, None, colour) for img in digits]
+    for i in range(9):
+        row = np.concatenate(digits[i * 9:((i + 1) * 9)], axis=0)
+        rows.append(row)
+    img_grid = np.concatenate(rows, axis=1)
+    show_image(img_grid)
+    return img_grid
     
 def show_image(img):
 	"""Shows an image until any key is pressed"""
@@ -368,7 +382,10 @@ while True:
                 warped_copy = warped.copy()
                 squares = infer_grid(warped_copy)
                 digits = get_digits(warped_copy, squares, 28)
-                show_digits(digits)
+                cv2.imshow("WWEWE", digits[9])
+                img_grid = show_digits(digits)
+                image_to_array(img_grid)
+                
                 
                 cv2.imshow("Sudoku-Original", warped_copy)
               
