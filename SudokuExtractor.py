@@ -101,7 +101,7 @@ def find_largest_feature(inp_img, scan_tl=None, scan_br=None):
 				right = x if x > right else right
 
 	bbox = [[left, top], [right, bottom]]
-	return img, np.array(bbox, dtype='float32'), seed_point
+	return np.array(bbox, dtype='float32')
 
 
 def cut_from_rect(img, rect):
@@ -150,7 +150,7 @@ def extract_digit(img, rect, size):
 	# Margin used to define an area in the middle we would expect to find a pixel belonging to the digit
 	h, w = digit.shape[:2]
 	margin = int(np.mean([h, w]) / 2.5)
-	_, bbox, seed = find_largest_feature(digit, [margin, margin], [w - margin, h - margin])
+	bbox = find_largest_feature(digit, [margin, margin], [w - margin, h - margin])
 	digit = cut_from_rect(digit, bbox)
 
 	# Scale and pad the digit so that it fits a square of the digit size we're using for machine learning
@@ -354,6 +354,7 @@ def check_if_is_square(rect):
     return True
 
 def create_grid():
+    """ Create an empty 9x9 matrix (filled with 0) """
     grid = []
     for i in range(SIZE):
         row = []
