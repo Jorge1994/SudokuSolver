@@ -8,8 +8,18 @@ Created on Sun Sep 20 12:06:14 2020
 import cv2
 import numpy as np
 import math
+import Solver
+import copy
+from scipy import ndimage
 
 SIZE = 9
+
+def are_matrices_equals(matrix_1, matrix_2, row, col):
+    for i in range(row):
+        for j in range(col):
+            if matrix_1[i][j] != matrix_2[i][j]:
+                return False
+    return True
 
 def infer_grid(img):
     squares = []
@@ -23,6 +33,19 @@ def infer_grid(img):
             #cv2.rectangle(img, (int(p1[0]), int(p1[1])),(int(p2[0]), int(p2[1])), (255,0,0), 3)
             squares.append((p1, p2))
     return squares
+
+def get_best_shift(img):
+    cy, cx = ndimage.measurements.center_of_mass(img)
+    rows, cols = img.shape
+    shiftx = np.round(cols/2.0-cx).astype(int)
+    shifty = np.round(rows/2.0-cy).astype(int)
+    return shiftx, shifty
+
+def shift(img,sx,sy):
+    rows,cols = img.shape
+    M = np.float32([[1,0,sx],[0,1,sy]])
+    shifted = cv2.warpAffine(img,M,(cols,rows))
+    return shifted
 
 def find_largest_feature(inp_img, scan_tl=None, scan_br=None):
 	"""
@@ -140,27 +163,16 @@ def extract_digit(img, rect, size):
 	else:
 		return np.zeros((size, size), np.uint8)
 
-def pre_process_image(img, skip_dilate=False):
-	"""Uses a blurring function, adaptive thresholding and dilation to expose the main features of an image."""
-
-	# Gaussian blur with a kernal size (height, width) of 9.
-	# Note that kernal sizes must be positive and odd and the kernel must be square.
+def pre_process_image(img):
 	proc = cv2.GaussianBlur(img.copy(), (9, 9), 0)
-
-	# Adaptive threshold using 11 nearest neighbour pixels
 	proc = cv2.adaptiveThreshold(proc, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-
-	# Invert colours, so gridlines have non-zero pixel values.
-	# Necessary to dilate the image, otherwise will look like erosion instead.
 	proc = cv2.bitwise_not(proc, proc)
-
 	return proc
-
 
 def get_digits(img, squares, size):
     digits = []
     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    img = pre_process_image(img.copy(), skip_dilate=True)
+    img = pre_process_image(img.copy())
     for square in squares:
         digits.append(extract_digit(img, square, size))
     return digits
@@ -275,16 +287,40 @@ def find_corners_locations(corners):
     rect = rect.reshape(4,2)
     return rect
 
-def image_to_array(array):
+def prepare(img_array):
+    new_array = img_array.reshape(-1, 28, 28, 1)
+    new_array = new_array.astype('float32')
+    new_array /= 255
+    return new_array
+
+def image_to_array(array, model):
     grid = create_grid()
     cv2.imshow("wewewewe",array[28:28+28, 28:28+28])
     for i in range(9):
         for j in range (9):
-            grid[i][j] = np.sum(array[i*28:i*28+28, j*28:j*28+28])
-    print(grid)
+            if np.sum(array[i*28:i*28+28, j*28:j*28+28]) > 0:
+                digit_img = array[i*28:i*28+28, j*28:j*28+28]
+                
+                _, digit_img = cv2.threshold(digit_img, 200, 255, cv2.THRESH_BINARY) 
+                digit_img = digit_img.astype(np.uint8)
+                #digit_img = cv2.bitwise_not(digit_img)
+                
+                shift_x, shift_y = get_best_shift(digit_img)
+                shifted = shift(digit_img,shift_x,shift_y)
+                digit_img = shifted
+                digit_img = cv2.bitwise_not(digit_img)
+                
+                digit_img2 = prepare(digit_img)
+                
+                prediction= model.predict(digit_img2)
+                #cv2.imshow(str(np.argmax(prediction[0])), digit_img)
+                #print(np.argmax(prediction[0]))
+                grid[i][j] = np.argmax(prediction[0])+1
+            else:
+                grid[i][j] = 0
+    #print(grid)
+    return grid
     
-
-
 def check_if_is_square(rect):
     #   A------B
     #   |      |
@@ -316,11 +352,6 @@ def check_if_is_square(rect):
         return False
     
     return True
-    
-        
-cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720) 
 
 def create_grid():
     grid = []
@@ -331,6 +362,20 @@ def create_grid():
         grid.append(row)
     return grid
         
+def draw_solution_on_image(img, solved, unsolved):
+    for i in range(SIZE):
+        for j in range(SIZE):
+            if unsolved[i][j] != 0:
+                continue
+            else:
+                num = solved[i][j]
+                X = img.shape[0]/9
+                Y = img.shape[1]/9
+                x_pos = X*i + X/2
+                y_pos = Y*j + Y/2
+                cv2.putText(img, str(num), (int(y_pos)-5,int(x_pos)+10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2) 
+    
+
 def show_digits(digits, colour=255):
     """Shows list of 81 extracted digits in a grid format"""
     rows = []
@@ -346,8 +391,8 @@ def show_image(img):
 	"""Shows an image until any key is pressed"""
 	cv2.imshow('image', img)  # Display the image
 
-while True:
-    ret, frame = cap.read()
+def test(frame, model, old_sudoku):
+    #ret, frame = cap.read()
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (9,9), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
@@ -382,24 +427,65 @@ while True:
                 warped_copy = warped.copy()
                 squares = infer_grid(warped_copy)
                 digits = get_digits(warped_copy, squares, 28)
-                cv2.imshow("WWEWE", digits[9])
+                #cv2.imshow("WWEWE", digits[9])
                 img_grid = show_digits(digits)
-                image_to_array(img_grid)
+                grid = image_to_array(img_grid, model)
+                unsolved_grid = copy.deepcopy(grid) 
+                zeros = 81 - np.count_nonzero(unsolved_grid)
+                if(zeros >= 17):
+                    if (not old_sudoku is None) and are_matrices_equals(old_sudoku, grid, SIZE, SIZE):
+                       if(Solver.solve_sudoku(grid)):
+                        draw_solution_on_image(warped_copy, old_sudoku, unsolved_grid)
+                    else:
+                        if(Solver.solve_sudoku(grid)):
+                            draw_solution_on_image(warped_copy, grid, unsolved_grid)
+                            old_sudoku = copy.deepcopy(grid)
+                else:
+                    return frame
+                
+                #for i in range(9):
+                  #  for j in range(9):
+                   #     print(grid[i])
+                    #    num = grid[i][j]
+                     #   X = warped_copy.shape[0]/9
+                      #  Y = warped_copy.shape[1]/9
+                       # x_pos = X*i + X/2
+                       # y_pos = Y*j + Y/2
+                       # cv2.putText(warped_copy, str(num), (int(y_pos)-5,int(x_pos)+10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2) 
                 
                 
-                cv2.imshow("Sudoku-Original", warped_copy)
-              
-            cv2.circle(frame, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
-            cv2.circle(frame, (rect[1][0], rect[1][1]), 5, (0,0,255), 5)
-            cv2.circle(frame, (rect[2][0], rect[2][1]), 5, (0,0,255), 5)
-            cv2.circle(frame, (rect[3][0], rect[3][1]), 5, (0,0,255), 5)
+                
+                    
+                
+                result_sudoku = cv2.warpPerspective(warped_copy, M, (frame.shape[1], frame.shape[0])
+                                        , flags=cv2.WARP_INVERSE_MAP)
+                result = np.where(result_sudoku.sum(axis=-1,keepdims=True)!=0, result_sudoku, frame)
+                cv2.circle(result, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
+                cv2.circle(result, (rect[1][0], rect[1][1]), 5, (0,0,255), 5)
+                cv2.circle(result, (rect[2][0], rect[2][1]), 5, (0,0,255), 5)
+                cv2.circle(result, (rect[3][0], rect[3][1]), 5, (0,0,255), 5)
+                cv2.drawContours(result,[max_contour], 0,  (0,255,0), 3)
+                return result
+            else:
+                return frame
+        else:
+            return frame
+    else:
+        return frame
+                #cv2.imshow("solution", result)
+                #cv2.imshow("Sudoku-Original", warped_copy)
+                #cv2.imshow("Solved", result)
+            #cv2.circle(frame, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
+            #cv2.circle(frame, (rect[1][0], rect[1][1]), 5, (0,0,255), 5)
+            #cv2.circle(frame, (rect[2][0], rect[2][1]), 5, (0,0,255), 5)
+            #cv2.circle(frame, (rect[3][0], rect[3][1]), 5, (0,0,255), 5)
     
-    cv2.drawContours(frame,[max_contour], 0,  (0,255,0), 3)
-    cv2.imshow("Original", frame)
-    cv2.imshow("Output", thresh)
+    #cv2.drawContours(frame,[max_contour], 0,  (0,255,0), 3)
+    #cv2.imshow("Original", frame)
+    #cv2.imshow("Output", thresh)
     
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    #if cv2.waitKey(1) & 0xFF == ord('q'):
+        #break
 
-cap.release()
-cv2.destroyAllWindows()
+#cap.release()
+#cv2.destroyAllWindows()
