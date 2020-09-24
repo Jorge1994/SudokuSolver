@@ -5,8 +5,7 @@ Created on Wed Sep 23 17:49:09 2020
 @author: PJ
 """
 import cv2
-import numpy as np
-import sudoku1
+import SudokuExtractor
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Conv2D, MaxPooling2D
@@ -38,7 +37,7 @@ if __name__ == "__main__":
     while True:
         ret, frame = cap.read()
         if ret == True:
-            new_frame = sudoku1.test(frame, model, old_sudoku)
+            new_frame, old_sudoku = SudokuExtractor.extract_and_solve_sudoku(frame, model, old_sudoku)
             cv2.imshow("Solved", new_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break

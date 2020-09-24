@@ -383,15 +383,9 @@ def show_digits(digits, colour=255):
         row = np.concatenate(digits[i * 9:((i + 1) * 9)], axis=0)
         rows.append(row)
     img_grid = np.concatenate(rows, axis=1)
-    show_image(img_grid)
     return img_grid
-    
-def show_image(img):
-	"""Shows an image until any key is pressed"""
-	cv2.imshow('image', img)  # Display the image
 
-def test(frame, model, old_sudoku):
-    #ret, frame = cap.read()
+def extract_and_solve_sudoku(frame, model, old_sudoku):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (9,9), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
@@ -426,24 +420,28 @@ def test(frame, model, old_sudoku):
                 digits = get_digits(warped_copy, squares, 28)
                 #cv2.imshow("WWEWE", digits[9])
                 img_grid = show_digits(digits)
+                cv2.imshow("Digits Grid", img_grid)
                 grid = image_to_array(img_grid, model)
                 unsolved_grid = copy.deepcopy(grid) 
-                zeros = 81 - np.count_nonzero(unsolved_grid)
-                if(zeros >= 17):
+                #zeros = 81 - np.count_nonzero(unsolved_grid)
+            
+                if(np.count_nonzero(unsolved_grid) >= 17):
                     if (not old_sudoku is None) and are_matrices_equals(old_sudoku, grid, SIZE, SIZE):
-                       if(Solver.solve_sudoku(grid)):
-                        draw_solution_on_image(warped_copy, old_sudoku, unsolved_grid)
+                       if(Solver.is_solved(grid)):
+                           draw_solution_on_image(warped_copy, old_sudoku, unsolved_grid)
                     else:
-                        if(Solver.solve_sudoku(grid)):
+                        print(grid)
+                        Solver.solve_sudoku(grid)
+                        if(Solver.is_solved(grid)):
                             draw_solution_on_image(warped_copy, grid, unsolved_grid)
                             old_sudoku = copy.deepcopy(grid)
                 else:
-                    return frame
+                    return frame, None
                 
                 result_sudoku = cv2.warpPerspective(warped_copy, M, (frame.shape[1], frame.shape[0])
                                         , flags=cv2.WARP_INVERSE_MAP)
                 result = np.where(result_sudoku.sum(axis=-1,keepdims=True)!=0, result_sudoku, frame)
-                
+               
                 # Draw the 4 corners of the Sudoku puzzle
                 cv2.circle(result, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
                 cv2.circle(result, (rect[1][0], rect[1][1]), 5, (0,0,255), 5)
@@ -452,13 +450,13 @@ def test(frame, model, old_sudoku):
                 
                 # Draw the contour of the Sudoku puzzle
                 cv2.drawContours(result,[max_contour], 0,  (0,255,0), 3)
-                return result
+                return result, old_sudoku
             else:
-                return frame
+                return frame, None
         else:
-            return frame
+            return frame, None
     else:
-        return frame
+        return frame, None
                 #cv2.imshow("solution", result)
                 #cv2.imshow("Sudoku-Original", warped_copy)
                 #cv2.imshow("Solved", result)

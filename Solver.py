@@ -18,6 +18,13 @@ def find_empty_location(matrix, l):
                 return True
     return False
 
+def is_solved(matrix):
+    for i in range(9):
+        for j in range(9):
+            if(matrix[i][j] == 0):
+                return False
+    return True
+
 def check_row(matrix, row, num):
     for i in range(9):
         if matrix[row][i] == num:
