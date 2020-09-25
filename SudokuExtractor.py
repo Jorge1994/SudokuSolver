@@ -9,7 +9,6 @@ import cv2
 import numpy as np
 import math
 import Solver
-import copy
 from scipy import ndimage
 
 SIZE = 9
@@ -295,7 +294,7 @@ def prepare(img_array):
 
 def image_to_array(array, model):
     grid = create_grid()
-    cv2.imshow("wewewewe",array[28:28+28, 28:28+28])
+    #cv2.imshow("wewewewe",array[28:28+28, 28:28+28])
     for i in range(9):
         for j in range (9):
             if np.sum(array[i*28:i*28+28, j*28:j*28+28]) > 0:
@@ -390,7 +389,7 @@ def extract_and_solve_sudoku(frame, model, old_sudoku):
     blur = cv2.GaussianBlur(gray, (9,9), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     _, contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    _, max_contour = find_max_contour(contours)
+    max_area, max_contour = find_max_contour(contours)
     if max_contour is not None:
         corners = get_corners_from_contour(max_contour)
         if corners is not None:
@@ -422,35 +421,47 @@ def extract_and_solve_sudoku(frame, model, old_sudoku):
                 img_grid = show_digits(digits)
                 cv2.imshow("Digits Grid", img_grid)
                 grid = image_to_array(img_grid, model)
-                unsolved_grid = copy.deepcopy(grid) 
+                unsolved_grid = [r.copy() for r in grid]
+                #print("copy")
+                #print(unsolved_grid)
+                #print("deepcopy")
+                #print(copy.deepcopy(grid))
+                #unsolved_grid = copy.deepcopy(grid) 
                 #zeros = 81 - np.count_nonzero(unsolved_grid)
-            
-                if(np.count_nonzero(unsolved_grid) >= 17):
-                    if (not old_sudoku is None) and are_matrices_equals(old_sudoku, grid, SIZE, SIZE):
-                       if(Solver.is_solved(grid)):
-                           draw_solution_on_image(warped_copy, old_sudoku, unsolved_grid)
+                if(max_area > 65000):
+                    if(np.count_nonzero(unsolved_grid) >= 17):
+                        if (old_sudoku is not None):# and are_matrices_equals(grid, old_sudoku, SIZE, SIZE):
+                            #print(are_matrices_equals(grid, old_sudoku, 9, 9))
+                            if(Solver.is_solved(old_sudoku)):
+                                print("Não")
+                                draw_solution_on_image(warped_copy, old_sudoku, unsolved_grid)
+                        else:
+                            #print(grid)
+                            _, grid = Solver.solve_sudoku(grid)
+                            if(Solver.is_solved(grid)):
+                                print("Sim")
+                                draw_solution_on_image(warped_copy, grid, unsolved_grid)
+                                #old_sudoku = copy.deepcopy(grid)
+                                old_sudoku = [r.copy() for r in grid]
                     else:
-                        print(grid)
-                        Solver.solve_sudoku(grid)
-                        if(Solver.is_solved(grid)):
-                            draw_solution_on_image(warped_copy, grid, unsolved_grid)
-                            old_sudoku = copy.deepcopy(grid)
+                        return frame, None
+                
+                    result_sudoku = cv2.warpPerspective(warped_copy, M, (frame.shape[1], frame.shape[0])
+                                            , flags=cv2.WARP_INVERSE_MAP)
+                    result = np.where(result_sudoku.sum(axis=-1,keepdims=True)!=0, result_sudoku, frame)
+                   
+                    # Draw the 4 corners of the Sudoku puzzle
+                    cv2.circle(result, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
+                    cv2.circle(result, (rect[1][0], rect[1][1]), 5, (0,0,255), 5)
+                    cv2.circle(result, (rect[2][0], rect[2][1]), 5, (0,0,255), 5)
+                    cv2.circle(result, (rect[3][0], rect[3][1]), 5, (0,0,255), 5)
+                    
+                    # Draw the contour of the Sudoku puzzle
+                    cv2.drawContours(result, [max_contour], 0,  (0,255,0), 3)
+                
+                    return result, old_sudoku
                 else:
                     return frame, None
-                
-                result_sudoku = cv2.warpPerspective(warped_copy, M, (frame.shape[1], frame.shape[0])
-                                        , flags=cv2.WARP_INVERSE_MAP)
-                result = np.where(result_sudoku.sum(axis=-1,keepdims=True)!=0, result_sudoku, frame)
-               
-                # Draw the 4 corners of the Sudoku puzzle
-                cv2.circle(result, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
-                cv2.circle(result, (rect[1][0], rect[1][1]), 5, (0,0,255), 5)
-                cv2.circle(result, (rect[2][0], rect[2][1]), 5, (0,0,255), 5)
-                cv2.circle(result, (rect[3][0], rect[3][1]), 5, (0,0,255), 5)
-                
-                # Draw the contour of the Sudoku puzzle
-                cv2.drawContours(result,[max_contour], 0,  (0,255,0), 3)
-                return result, old_sudoku
             else:
                 return frame, None
         else:

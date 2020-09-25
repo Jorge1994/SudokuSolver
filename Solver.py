@@ -50,7 +50,7 @@ def is_valid(matrix, col, row, num):
 def solve_sudoku(matrix):
     l = [0, 0]
     if not find_empty_location(matrix,l):
-        return True
+        return True, matrix
     else:
         row = l[0]
         col = l[1]
@@ -58,12 +58,13 @@ def solve_sudoku(matrix):
         for num in range(1,10):
             if is_valid(matrix, col, row, num):
                 matrix[row][col] = num
-                if(solve_sudoku(matrix)):
-                    return True
+                solved, _ = solve_sudoku(matrix)
+                if(solved):
+                    return True, matrix
                 else:
                     matrix[row][col] = 0
 
-        return False
+        return False, matrix
 
 if __name__ == "__main__":
     sudoku1 =[[0 for x in range(9)]for y in range(9)] 
