@@ -127,7 +127,7 @@ def create_model(train_X, train_y, test_X, test_y):
     
     model.evaluate(test_X, test_y, verbose=0)
     
-    model.save('digit_model.h5')
+    model.save('digit_model_v2.h5')
 
 if __name__ == "__main__":
     dataset = load_dataset()

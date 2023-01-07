@@ -25,13 +25,13 @@ def load_model():
     model.add(Dense(128, activation='relu'))
     model.add(Dropout(0.5))
     model.add(Dense(NUM_CLASSES, activation='softmax'))
-    model.load_weights('digit_model.h5')
+    model.load_weights('digit_model_v2.h5')
     return model
 
 if __name__ == "__main__":
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,720) 
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,500)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT,500) 
     model = load_model()
     old_sudoku = None
     while True:

@@ -311,7 +311,7 @@ def image_to_array(array, model):
                 
                 digit_img2 = prepare(digit_img)
                 
-                prediction= model.predict(digit_img2)
+                prediction= model.predict(digit_img2, verbose = 0)
                 #cv2.imshow(str(np.argmax(prediction[0])), digit_img)
                 #print(np.argmax(prediction[0]))
                 grid[i][j] = np.argmax(prediction[0])+1
@@ -388,7 +388,7 @@ def extract_and_solve_sudoku(frame, model, old_sudoku):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (9,9), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    _, contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     max_area, max_contour = find_max_contour(contours)
     if max_contour is not None:
         corners = get_corners_from_contour(max_contour)
@@ -449,12 +449,12 @@ def extract_and_solve_sudoku(frame, model, old_sudoku):
                     result_sudoku = cv2.warpPerspective(warped_copy, M, (frame.shape[1], frame.shape[0])
                                             , flags=cv2.WARP_INVERSE_MAP)
                     result = np.where(result_sudoku.sum(axis=-1,keepdims=True)!=0, result_sudoku, frame)
-                   
+                    
                     # Draw the 4 corners of the Sudoku puzzle
-                    cv2.circle(result, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
-                    cv2.circle(result, (rect[1][0], rect[1][1]), 5, (0,0,255), 5)
-                    cv2.circle(result, (rect[2][0], rect[2][1]), 5, (0,0,255), 5)
-                    cv2.circle(result, (rect[3][0], rect[3][1]), 5, (0,0,255), 5)
+                    cv2.circle(result, (int(rect[0][0]), int(rect[0][1])), 5, (0,0,255), 5)
+                    cv2.circle(result, (int(rect[1][0]), int(rect[1][1])), 5, (0,0,255), 5)
+                    cv2.circle(result, (int(rect[2][0]), int(rect[2][1])), 5, (0,0,255), 5)
+                    cv2.circle(result, (int(rect[3][0]), int(rect[3][1])), 5, (0,0,255), 5)
                     
                     # Draw the contour of the Sudoku puzzle
                     cv2.drawContours(result, [max_contour], 0,  (0,255,0), 3)
@@ -468,20 +468,3 @@ def extract_and_solve_sudoku(frame, model, old_sudoku):
             return frame, None
     else:
         return frame, None
-                #cv2.imshow("solution", result)
-                #cv2.imshow("Sudoku-Original", warped_copy)
-                #cv2.imshow("Solved", result)
-            #cv2.circle(frame, (rect[0][0], rect[0][1]), 5, (0,0,255), 5)
-            #cv2.circle(frame, (rect[1][0], rect[1][1]), 5, (0,0,255), 5)
-            #cv2.circle(frame, (rect[2][0], rect[2][1]), 5, (0,0,255), 5)
-            #cv2.circle(frame, (rect[3][0], rect[3][1]), 5, (0,0,255), 5)
-    
-    #cv2.drawContours(frame,[max_contour], 0,  (0,255,0), 3)
-    #cv2.imshow("Original", frame)
-    #cv2.imshow("Output", thresh)
-    
-    #if cv2.waitKey(1) & 0xFF == ord('q'):
-        #break
-
-#cap.release()
-#cv2.destroyAllWindows()
