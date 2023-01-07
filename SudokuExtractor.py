@@ -33,6 +33,7 @@ def infer_grid(img):
             squares.append((p1, p2))
     return squares
 
+# Calculate how to centralize the image using its center of mass
 def get_best_shift(img):
     cy, cx = ndimage.measurements.center_of_mass(img)
     rows, cols = img.shape
@@ -40,6 +41,7 @@ def get_best_shift(img):
     shifty = np.round(rows/2.0-cy).astype(int)
     return shiftx, shifty
 
+# Shift the image using what get_best_shift returns
 def shift(img,sx,sy):
     rows,cols = img.shape
     M = np.float32([[1,0,sx],[0,1,sy]])
@@ -294,30 +296,32 @@ def prepare(img_array):
 
 def image_to_array(array, model):
     grid = create_grid()
-    #cv2.imshow("wewewewe",array[28:28+28, 28:28+28])
+    
     for i in range(9):
         for j in range (9):
+            # if square is not empty
             if np.sum(array[i*28:i*28+28, j*28:j*28+28]) > 0:
+                # get the square where is the number
                 digit_img = array[i*28:i*28+28, j*28:j*28+28]
-                
+                # threshold the square
                 _, digit_img = cv2.threshold(digit_img, 200, 255, cv2.THRESH_BINARY) 
                 digit_img = digit_img.astype(np.uint8)
-                #digit_img = cv2.bitwise_not(digit_img)
                 
+                # center the digit in the square
                 shift_x, shift_y = get_best_shift(digit_img)
                 shifted = shift(digit_img,shift_x,shift_y)
                 digit_img = shifted
                 digit_img = cv2.bitwise_not(digit_img)
                 
+                # prepare the image of the square to be classified
                 digit_img2 = prepare(digit_img)
-                
+                # classify the digit
                 prediction= model.predict(digit_img2, verbose = 0)
-                #cv2.imshow(str(np.argmax(prediction[0])), digit_img)
-                #print(np.argmax(prediction[0]))
+                
                 grid[i][j] = np.argmax(prediction[0])+1
             else:
                 grid[i][j] = 0
-    #print(grid)
+
     return grid
     
 def check_if_is_square(rect):
@@ -388,8 +392,9 @@ def extract_and_solve_sudoku(frame, model, old_sudoku):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (9,9), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    _, contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     max_area, max_contour = find_max_contour(contours)
+    
     if max_contour is not None:
         corners = get_corners_from_contour(max_contour)
         if corners is not None:
@@ -413,35 +418,25 @@ def extract_and_solve_sudoku(frame, model, old_sudoku):
                 
                 M = cv2.getPerspectiveTransform(rect, dst)
                 warped = cv2.warpPerspective(frame, M, (max_width, max_height))
-                
+                #cv2.imshow("Game Area", warped)
                 warped_copy = warped.copy()
                 squares = infer_grid(warped_copy)
                 digits = get_digits(warped_copy, squares, 28)
-                #cv2.imshow("WWEWE", digits[9])
                 img_grid = show_digits(digits)
-                cv2.imshow("Digits Grid", img_grid)
+                #cv2.imshow("Digits Grid", img_grid)
                 grid = image_to_array(img_grid, model)
                 unsolved_grid = [r.copy() for r in grid]
-                #print("copy")
-                #print(unsolved_grid)
-                #print("deepcopy")
-                #print(copy.deepcopy(grid))
-                #unsolved_grid = copy.deepcopy(grid) 
-                #zeros = 81 - np.count_nonzero(unsolved_grid)
+                
+                # Sudoku Puzzle 
                 if(max_area > 65000):
-                    if(np.count_nonzero(unsolved_grid) >= 17):
-                        if (old_sudoku is not None):# and are_matrices_equals(grid, old_sudoku, SIZE, SIZE):
-                            #print(are_matrices_equals(grid, old_sudoku, 9, 9))
+                    if(np.count_nonzero(unsolved_grid) >= 17): # there must be at least 17 clues in order for a Sudoku Board to have a unique solution.
+                        if (old_sudoku is not None):
                             if(Solver.is_solved(old_sudoku)):
-                                print("Não")
                                 draw_solution_on_image(warped_copy, old_sudoku, unsolved_grid)
                         else:
-                            #print(grid)
                             _, grid = Solver.solve_sudoku(grid)
                             if(Solver.is_solved(grid)):
-                                print("Sim")
                                 draw_solution_on_image(warped_copy, grid, unsolved_grid)
-                                #old_sudoku = copy.deepcopy(grid)
                                 old_sudoku = [r.copy() for r in grid]
                     else:
                         return frame, None
