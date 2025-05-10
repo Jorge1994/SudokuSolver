@@ -295,33 +295,54 @@ def prepare(img_array):
     return new_array
 
 def image_to_array(array, model):
+    # Create an empty 9x9 grid initialized with zeros
     grid = create_grid()
-    
-    for i in range(9):
-        for j in range (9):
-            # if square is not empty
-            if np.sum(array[i*28:i*28+28, j*28:j*28+28]) > 0:
-                # get the square where is the number
-                digit_img = array[i*28:i*28+28, j*28:j*28+28]
-                # threshold the square
-                _, digit_img = cv2.threshold(digit_img, 200, 255, cv2.THRESH_BINARY) 
-                digit_img = digit_img.astype(np.uint8)
-                
-                # center the digit in the square
-                shift_x, shift_y = get_best_shift(digit_img)
-                shifted = shift(digit_img,shift_x,shift_y)
-                digit_img = shifted
-                digit_img = cv2.bitwise_not(digit_img)
-                
-                # prepare the image of the square to be classified
-                digit_img2 = prepare(digit_img)
-                # classify the digit
-                prediction= model.predict(digit_img2, verbose = 0)
-                
-                grid[i][j] = np.argmax(prediction[0])+1
-            else:
-                grid[i][j] = 0
 
+    # Store digits that need to be predicted and their positions
+    digits_to_predict = []
+    positions = []
+
+    # Loop over all 81 cells in the 9x9 grid
+    for i in range(9):
+        for j in range(9):
+            # Extract the 28x28 image of the current cell
+            digit_img = array[i*28:i*28+28, j*28:j*28+28]
+
+            # Check if the cell contains a digit (not empty)
+            if np.sum(digit_img) > 0:
+                # Binarize the image
+                _, digit_img = cv2.threshold(digit_img, 200, 255, cv2.THRESH_BINARY)
+
+                # Ensure image is in correct format
+                digit_img = digit_img.astype(np.uint8)
+
+                # Center the digit in the image
+                shift_x, shift_y = get_best_shift(digit_img)
+                digit_img = shift(digit_img, shift_x, shift_y)
+
+                # Invert the image (black digit on white background)
+                digit_img = cv2.bitwise_not(digit_img)
+
+                # Normalize and reshape to (28, 28, 1)
+                digit_img = digit_img.astype('float32') / 255.0
+                digit_img = digit_img.reshape(28, 28, 1)
+
+                # Add to batch and record its grid position
+                digits_to_predict.append(digit_img)
+                positions.append((i, j))
+
+    # If there are any digits to predict
+    if digits_to_predict:
+        # Convert list to array and predict all at once
+        batch = np.array(digits_to_predict)
+        predictions = model.predict(batch, verbose=0)
+
+        # Assign predictions back to correct grid positions
+        for idx, prediction in enumerate(predictions):
+            i, j = positions[idx]
+            grid[i][j] = np.argmax(prediction) + 1
+
+    # Return the final grid of digits
     return grid
     
 def check_if_is_square(rect):
@@ -392,7 +413,7 @@ def extract_and_solve_sudoku(frame, model, old_sudoku):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (9,9), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    _, contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     max_area, max_contour = find_max_contour(contours)
     
     if max_contour is not None:
