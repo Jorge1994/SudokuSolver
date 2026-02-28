@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 """
-Created on Sun Sep 20 12:06:14 2020
+Sudoku Grid Extraction and Image Processing Module.
 
-@author: PJ
+This module handles computer vision operations for detecting and extracting Sudoku puzzles
+from video frames, recognizing digits, solving puzzles, and overlaying solutions.
 """
 
 import cv2
@@ -11,471 +11,722 @@ import math
 import Solver
 from scipy import ndimage
 
-SIZE = 9
+# Grid configuration
+GRID_SIZE = 9
 
-def are_matrices_equals(matrix_1, matrix_2, row, col):
-    for i in range(row):
-        for j in range(col):
-            if matrix_1[i][j] != matrix_2[i][j]:
+def are_grids_equal(grid_1, grid_2, num_rows, num_cols):
+    """
+    Compare two grids for equality.
+    
+    Args:
+        grid_1: First grid to compare
+        grid_2: Second grid to compare
+        num_rows: Number of rows to compare
+        num_cols: Number of columns to compare
+    
+    Returns:
+        bool: True if grids are equal, False otherwise
+    """
+    for i in range(num_rows):
+        for j in range(num_cols):
+            if grid_1[i][j] != grid_2[i][j]:
                 return False
     return True
 
-def infer_grid(img):
-    squares = []
-    side = img.shape
-    side_h = side[0] // 9
-    side_w = side[1] // 9
+def calculate_cell_boundaries(image):
+    """
+    Calculate bounding boxes for all 81 cells in a 9x9 Sudoku grid.
+    
+    Args:
+        image: Warped Sudoku grid image
+    
+    Returns:
+        list: List of 81 tuples with (top_left, bottom_right) coordinates for each cell
+    """
+    cell_rectangles = []
+    image_dimensions = image.shape
+    cell_height = image_dimensions[0] // 9
+    cell_width = image_dimensions[1] // 9
     for i in range(9):
         for j in range(9):
-            p1 = (i * side_w, j * side_h)  # Top left corner of a bounding box
-            p2 = ((i + 1) * side_w, (j + 1) * side_h)  # Bottom right corner of bounding box
-            #cv2.rectangle(img, (int(p1[0]), int(p1[1])),(int(p2[0]), int(p2[1])), (255,0,0), 3)
-            squares.append((p1, p2))
-    return squares
+            top_left = (i * cell_width, j * cell_height)
+            bottom_right = ((i + 1) * cell_width, (j + 1) * cell_height)
+            cell_rectangles.append((top_left, bottom_right))
+    return cell_rectangles
 
-# Calculate how to centralize the image using its center of mass
-def get_best_shift(img):
-    cy, cx = ndimage.measurements.center_of_mass(img)
-    rows, cols = img.shape
-    shiftx = np.round(cols/2.0-cx).astype(int)
-    shifty = np.round(rows/2.0-cy).astype(int)
-    return shiftx, shifty
-
-# Shift the image using what get_best_shift returns
-def shift(img,sx,sy):
-    rows,cols = img.shape
-    M = np.float32([[1,0,sx],[0,1,sy]])
-    shifted = cv2.warpAffine(img,M,(cols,rows))
-    return shifted
-
-def find_largest_feature(inp_img, scan_tl=None, scan_br=None):
+def calculate_centering_shift(image):
     """
-    Uses the fact the `floodFill` function returns a bounding box of the area it filled to find the biggest
-    connected pixel structure in the image. Fills this structure in white, reducing the rest to black.
+    Calculate shift needed to center an image based on its center of mass.
+    
+    Args:
+        image: Input image
+    
+    Returns:
+        tuple: (shift_x, shift_y) pixel shifts needed to center the image
     """
-    img = inp_img.copy()  # Copy the image, leaving the original untouched
-    height, width = img.shape[:2]
+    center_y, center_x = ndimage.measurements.center_of_mass(image)
+    rows, cols = image.shape
+    shift_x = np.round(cols/2.0-center_x).astype(int)
+    shift_y = np.round(rows/2.0-center_y).astype(int)
+    return shift_x, shift_y
+
+def apply_shift(image, shift_x, shift_y):
+    """
+    Apply a translation shift to an image.
+    
+    Args:
+        image: Input image
+        shift_x: Horizontal shift in pixels
+        shift_y: Vertical shift in pixels
+    
+    Returns:
+        np.ndarray: Shifted image
+    """
+    rows, cols = image.shape
+    translation_matrix = np.float32([[1,0,shift_x],[0,1,shift_y]])
+    shifted_image = cv2.warpAffine(image, translation_matrix, (cols,rows))
+    return shifted_image
+
+def find_largest_connected_component(input_image, scan_top_left=None, scan_bottom_right=None):
+    """
+    Find the largest connected white pixel structure in the image.
+    
+    Uses flood fill to identify connected components and isolates the largest one.
+    This is typically used to extract the main Sudoku grid from noise.
+    
+    Args:
+        input_image: Binary image to process
+        scan_top_left: [x, y] coordinates to start scanning (optional)
+        scan_bottom_right: [x, y] coordinates to end scanning (optional)
+    
+    Returns:
+        np.ndarray: Bounding box as [[left, top], [right, bottom]]
+    """
+    processed_image = input_image.copy()
+    height, width = processed_image.shape[:2]
 
     max_area = 0
     seed_point = (None, None)
 
-    if scan_tl is None:
-        scan_tl = [0, 0]
+    if scan_top_left is None:
+        scan_top_left = [0, 0]
 
-    if scan_br is None:
-        scan_br = [width, height]
+    if scan_bottom_right is None:
+        scan_bottom_right = [width, height]
 
-    # Loop through the image
-    for x in range(scan_tl[0], scan_br[0]):
-        for y in range(scan_tl[1], scan_br[1]):
-            # Only operate on light or white squares
-            if img.item(y, x) == 255 and x < width and y < height:  # Note that .item() appears to take input as y, x
-                area = cv2.floodFill(img, None, (x, y), 64)
-                if area[0] > max_area:  # Gets the maximum bound area which should be the grid
+    # Find the largest connected component by flood filling
+    for x in range(scan_top_left[0], scan_bottom_right[0]):
+        for y in range(scan_top_left[1], scan_bottom_right[1]):
+            if processed_image.item(y, x) == 255 and x < width and y < height:
+                area = cv2.floodFill(processed_image, None, (x, y), 64)
+                if area[0] > max_area:
                     max_area = area[0]
                     seed_point = (x, y)
 
-    # Colour everything grey (compensates for features outside of our middle scanning range
+    # Set all white pixels to grey
     for x in range(width):
         for y in range(height):
-            if img.item(y, x) == 255 and x < width and y < height:
-                cv2.floodFill(img, None, (x, y), 64)
+            if processed_image.item(y, x) == 255 and x < width and y < height:
+                cv2.floodFill(processed_image, None, (x, y), 64)
 
-    mask = np.zeros((height + 2, width + 2), np.uint8)  # Mask that is 2 pixels bigger than the image
+    mask = np.zeros((height + 2, width + 2), np.uint8)
 
-    # Highlight the main feature
+    # Highlight the main feature in white
     if all([p is not None for p in seed_point]):
-        cv2.floodFill(img, mask, seed_point, 255)
+        cv2.floodFill(processed_image, mask, seed_point, 255)
 
     top, bottom, left, right = height, 0, width, 0
 
     for x in range(width):
         for y in range(height):
-            if img.item(y, x) == 64:  # Hide anything that isn't the main feature
-                cv2.floodFill(img, mask, (x, y), 0)
+            if processed_image.item(y, x) == 64:
+                cv2.floodFill(processed_image, mask, (x, y), 0)
 
-            # Find the bounding parameters
-            if img.item(y, x) == 255:
+            if processed_image.item(y, x) == 255:
                 top = y if y < top else top
                 bottom = y if y > bottom else bottom
                 left = x if x < left else left
                 right = x if x > right else right
 
-    bbox = [[left, top], [right, bottom]]
-    return np.array(bbox, dtype='float32')
+    bounding_box = [[left, top], [right, bottom]]
+    return np.array(bounding_box, dtype='float32')
 
 
-def cut_from_rect(img, rect):
-    """Cuts a rectangle from an image using the top left and bottom right points."""
-    return img[int(rect[0][1]):int(rect[1][1]), int(rect[0][0]):int(rect[1][0])]
-
-
-def centre_pad(length,size):
-    """Handles centering for a given length that may be odd or even."""
-    if length % 2 == 0:
-        side1 = int((size - length) / 2)
-        side2 = side1
-    else:
-        side1 = int((size - length) / 2)
-        side2 = side1 + 1
-    return side1, side2
-
-
-def scale_and_centre(img, size, margin=0, background=0):
-    """Scales and centres an image onto a new background square."""
-    h, w = img.shape[:2]
-
-    if h > w:
-        t_pad = int(margin / 2)
-        b_pad = t_pad
-        ratio = (size - margin) / h
-        w, h = int(ratio * w), int(ratio * h)
-        l_pad, r_pad = centre_pad(w,size)
-    else:
-        l_pad = int(margin / 2)
-        r_pad = l_pad
-        ratio = (size - margin) / w
-        w, h = int(ratio * w), int(ratio * h)
-        t_pad, b_pad = centre_pad(h,size)
-
-    img = cv2.resize(img, (w, h))
-    img = cv2.copyMakeBorder(img, t_pad, b_pad, l_pad, r_pad, cv2.BORDER_CONSTANT, None, background)
-    return cv2.resize(img, (size, size))
-
-def extract_digit(img, rect, size):
-    """Extracts a digit (if one exists) from a Sudoku square."""
-
-    digit = cut_from_rect(img, rect)  # Get the digit box from the whole square
-
-    # Use fill feature finding to get the largest feature in middle of the box
-    # Margin used to define an area in the middle we would expect to find a pixel belonging to the digit
-    h, w = digit.shape[:2]
-    margin = int(np.mean([h, w]) / 2.5)
-    bbox = find_largest_feature(digit, [margin, margin], [w - margin, h - margin])
-    digit = cut_from_rect(digit, bbox)
-
-    # Scale and pad the digit so that it fits a square of the digit size we're using for machine learning
-    w = bbox[1][0] - bbox[0][0]
-    h = bbox[1][1] - bbox[0][1]
-
-    # Ignore any small bounding boxes
-    if w > 0 and h > 0 and (w * h) > 100 and len(digit) > 0:
-        return scale_and_centre(digit, size, 4)
-    else:
-        return np.zeros((size, size), np.uint8)
-
-def pre_process_image(img):
-	proc = cv2.GaussianBlur(img.copy(), (9, 9), 0)
-	proc = cv2.adaptiveThreshold(proc, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-	proc = cv2.bitwise_not(proc, proc)
-	return proc
-
-def get_digits(img, squares, size):
-    digits = []
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    img = pre_process_image(img.copy())
-    for square in squares:
-        digits.append(extract_digit(img, square, size))
-    return digits
-
-def get_connected_component (image):
-    image = image.astype('uint8')
-    nb_components, output, stats, centroids = cv2.connectedComponentsWithStats(image, connectivity=8)
-    sizes = stats[:, -1]
+def extract_rectangle_region(image, rectangle):
+    """
+    Extract a rectangular region from an image.
     
-    if(len(sizes) <= 1):
+    Args:
+        image: Source image
+        rectangle: Rectangle as [[x1, y1], [x2, y2]]
+    
+    Returns:
+        np.ndarray: Extracted rectangular region
+    """
+    return image[int(rectangle[0][1]):int(rectangle[1][1]), int(rectangle[0][0]):int(rectangle[1][0])]
+
+
+def calculate_center_padding(content_length, target_size):
+    """
+    Calculate padding needed to center content within a target size.
+    
+    Args:
+        content_length: Current length of content
+        target_size: Target size to fit content into
+    
+    Returns:
+        tuple: (padding_side1, padding_side2)
+    """
+    if content_length % 2 == 0:
+        padding_side1 = int((target_size - content_length) / 2)
+        padding_side2 = padding_side1
+    else:
+        padding_side1 = int((target_size - content_length) / 2)
+        padding_side2 = padding_side1 + 1
+    return padding_side1, padding_side2
+
+
+def resize_and_center_image(image, target_size, margin=0, background_color=0):
+    """
+    Resize and center an image onto a square background.
+    
+    Maintains aspect ratio while fitting into a square of target_size.
+    
+    Args:
+        image: Input image to resize
+        target_size: Target square size (width and height)
+        margin: Margin to leave around content (default: 0)
+        background_color: Background color value (default: 0)
+    
+    Returns:
+        np.ndarray: Resized and centered image
+    """
+    height, width = image.shape[:2]
+
+    if height > width:
+        top_padding = int(margin / 2)
+        bottom_padding = top_padding
+        ratio = (target_size - margin) / height
+        width, height = int(ratio * width), int(ratio * height)
+        left_padding, right_padding = calculate_center_padding(width, target_size)
+    else:
+        left_padding = int(margin / 2)
+        right_padding = left_padding
+        ratio = (target_size - margin) / width
+        width, height = int(ratio * width), int(ratio * height)
+        top_padding, bottom_padding = calculate_center_padding(height, target_size)
+
+    image = cv2.resize(image, (width, height))
+    image = cv2.copyMakeBorder(image, top_padding, bottom_padding, left_padding, right_padding, cv2.BORDER_CONSTANT, None, background_color)
+    return cv2.resize(image, (target_size, target_size))
+
+def extract_digit_from_cell(image, cell_rectangle, digit_size):
+    """
+    Extract a digit from a Sudoku cell if one exists.
+    
+    Args:
+        image: Preprocessed grid image
+        cell_rectangle: Rectangle coordinates of the cell
+        digit_size: Target size for the extracted digit
+    
+    Returns:
+        np.ndarray: Extracted digit image or zeros if no digit found
+    """
+    digit_image = extract_rectangle_region(image, cell_rectangle)
+
+    # Find largest feature in center region where digit should be
+    height, width = digit_image.shape[:2]
+    margin = int(np.mean([height, width]) / 2.5)
+    bounding_box = find_largest_connected_component(digit_image, [margin, margin], [width - margin, height - margin])
+    digit_image = extract_rectangle_region(digit_image, bounding_box)
+
+    # Calculate bounding box dimensions
+    box_width = bounding_box[1][0] - bounding_box[0][0]
+    box_height = bounding_box[1][1] - bounding_box[0][1]
+
+    # Ignore small bounding boxes (likely noise)
+    if box_width > 0 and box_height > 0 and (box_width * box_height) > 100 and len(digit_image) > 0:
+        return resize_and_center_image(digit_image, digit_size, 4)
+    else:
+        return np.zeros((digit_size, digit_size), np.uint8)
+
+def preprocess_image_for_digit_extraction(image):
+    """
+    Preprocess image for digit extraction.
+    
+    Applies Gaussian blur and adaptive thresholding.
+    
+    Args:
+        image: Input grayscale image
+    
+    Returns:
+        np.ndarray: Preprocessed binary image
+    """
+    processed = cv2.GaussianBlur(image.copy(), (9, 9), 0)
+    processed = cv2.adaptiveThreshold(processed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    processed = cv2.bitwise_not(processed, processed)
+    return processed
+
+def extract_all_digits_from_grid(image, cell_rectangles, digit_size):
+    """
+    Extract all 81 digits from the Sudoku grid.
+    
+    Args:
+        image: Warped Sudoku grid image
+        cell_rectangles: List of 81 cell rectangle coordinates
+        digit_size: Size for extracted digit images
+    
+    Returns:
+        list: List of 81 digit images
+    """
+    digit_images = []
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    image = preprocess_image_for_digit_extraction(image.copy())
+    for cell_rect in cell_rectangles:
+        digit_images.append(extract_digit_from_cell(image, cell_rect, digit_size))
+    return digit_images
+
+def extract_largest_component_from_binary_image(image):
+    """
+    Extract the largest connected component from a binary image.
+    
+    Used to isolate main digit from noise in a cell.
+    
+    Args:
+        image: Binary image
+    
+    Returns:
+        np.ndarray: Image with only the largest component
+    """
+    image = image.astype('uint8')
+    num_components, component_labels, component_stats, component_centroids = cv2.connectedComponentsWithStats(image, connectivity=8)
+    component_sizes = component_stats[:, -1]
+    
+    if(len(component_sizes) <= 1):
         blank_image = np.zeros(image.shape)
         blank_image.fill(255)
         return blank_image
     
-    max_label = 1
-    max_size = sizes[1]
+    largest_component_label = 1
+    largest_component_size = component_sizes[1]
     
-    for i in range(2, nb_components):
-        if sizes[i] > max_size:
-            max_label = i
-            max_size = sizes[i]
+    for i in range(2, num_components):
+        if component_sizes[i] > largest_component_size:
+            largest_component_label = i
+            largest_component_size = component_sizes[i]
 
-    img2 = np.zeros(output.shape)
-    img2.fill(255)
-    img2[output == max_label] = 0
+    output_image = np.zeros(component_labels.shape)
+    output_image.fill(255)
+    output_image[component_labels == largest_component_label] = 0
     
-    return img2
+    return output_image
 
-def angle_between_two_vectors(vector1, vector2):
-    unit_vector_1 = vector1 / np.linalg.norm(vector1)
-    unit_vector_2 = vector2 / np.linalg.norm(vector2)
+def calculate_angle_between_vectors(vector_1, vector_2):
+    """
+    Calculate angle in degrees between two vectors.
+    
+    Args:
+        vector_1: First vector
+        vector_2: Second vector
+    
+    Returns:
+        float: Angle in degrees
+    """
+    unit_vector_1 = vector_1 / np.linalg.norm(vector_1)
+    unit_vector_2 = vector_2 / np.linalg.norm(vector_2)
     dot_product = np.dot(unit_vector_1, unit_vector_2)
-    angle = np.arccos(dot_product)
-    return math.degrees(angle)
+    angle_radians = np.arccos(dot_product)
+    return math.degrees(angle_radians)
 
-def check_if_sides_are_equals(A, B, C, D, tolerance):
-    AB = math.sqrt((A[0]-B[0])**2 + (A[1]-B[1])**2)
-    AD = math.sqrt((A[0]-D[0])**2 + (A[1]-D[1])**2)
-    BC = math.sqrt((B[0]-C[0])**2 + (B[1]-C[1])**2)
-    CD = math.sqrt((C[0]-D[0])**2 + (C[1]-D[1])**2)
-    shortest = min(AB, AD, BC, CD)
-    longest = max(AB, AD, BC, CD)
-    return longest > tolerance * shortest
+def check_if_quadrilateral_sides_are_similar(point_A, point_B, point_C, point_D, tolerance):
+    """
+    Check if all sides of a quadrilateral have similar lengths.
+    
+    Args:
+        point_A, point_B, point_C, point_D: Corner points
+        tolerance: Maximum ratio of longest to shortest side
+    
+    Returns:
+        bool: True if sides differ beyond tolerance, False if similar
+    """
+    side_AB = math.sqrt((point_A[0]-point_B[0])**2 + (point_A[1]-point_B[1])**2)
+    side_AD = math.sqrt((point_A[0]-point_D[0])**2 + (point_A[1]-point_D[1])**2)
+    side_BC = math.sqrt((point_B[0]-point_C[0])**2 + (point_B[1]-point_C[1])**2)
+    side_CD = math.sqrt((point_C[0]-point_D[0])**2 + (point_C[1]-point_D[1])**2)
+    shortest_side = min(side_AB, side_AD, side_BC, side_CD)
+    longest_side = max(side_AB, side_AD, side_BC, side_CD)
+    return longest_side > tolerance * shortest_side
 
-def is_approx_90_degrees(angle, tolerance):
+def is_angle_approximately_90_degrees(angle, tolerance):
+    """
+    Check if an angle is approximately 90 degrees.
+    
+    Args:
+        angle: Angle in degrees
+        tolerance: Acceptable deviation from 90 degrees
+    
+    Returns:
+        bool: True if within tolerance of 90 degrees
+    """
     return abs(angle - 90) < tolerance
 
-def find_max_contour(contours):
+def find_largest_contour(contours):
+    """
+    Find the contour with the largest area.
+    
+    Args:
+        contours: List of contours
+    
+    Returns:
+        tuple: (max_area, max_contour)
+    """
     max_area = -1
     max_contour = None
   
     for i in range(len(contours)):
-        temp = contours[i]
-        area = cv2.contourArea(temp)
+        current_contour = contours[i]
+        area = cv2.contourArea(current_contour)
         if area > max_area:
             max_area = area
-            max_contour = temp
+            max_contour = current_contour
    
     return max_area, max_contour
 
-def get_corners_from_contour(contours, corner_amount=4):
-    coefficient = 1
-    iterations = 300
-    while iterations > 0 and coefficient >= 0:
-        iterations = iterations -1
-        epsilon = coefficient * cv2.arcLength(contours, True)
-        poly_approx = cv2.approxPolyDP(contours, epsilon, True)
-        hull = cv2.convexHull(poly_approx)
+def approximate_contour_to_polygon(contour, num_corners=4):
+    """
+    Approximate a contour to a polygon with specified number of corners.
+    
+    Args:
+        contour: Input contour
+        num_corners: Desired number of corners (default: 4)
+    
+    Returns:
+        np.ndarray or None: Corner points if found, None otherwise
+    """
+    approximation_coefficient = 1
+    max_iterations = 300
+    while max_iterations > 0 and approximation_coefficient >= 0:
+        max_iterations = max_iterations - 1
+        epsilon = approximation_coefficient * cv2.arcLength(contour, True)
+        polygon_approximation = cv2.approxPolyDP(contour, epsilon, True)
+        convex_hull = cv2.convexHull(polygon_approximation)
    
-        if len(hull) == corner_amount:
-            return hull
+        if len(convex_hull) == num_corners:
+            return convex_hull
         else:
-            if len(hull) > corner_amount:
-                coefficient += .01
+            if len(convex_hull) > num_corners:
+                approximation_coefficient += .01
             else:
-                coefficient -= .01
+                approximation_coefficient -= .01
                 
     return None
 
-def find_corners_locations(corners):
+def order_corner_points_clockwise(corners):
+    """
+    Order four corner points in clockwise order starting from top-left.
+    
+    Returns corners as [top_left, top_right, bottom_right, bottom_left].
+    
+    Args:
+        corners: Array of 4 corner points in any order
+    
+    Returns:
+        np.ndarray: Ordered corner points (4, 2)
+    """
     max_sum = 1000000
     min_sum = 0
-    rect = np.zeros((4, 2), dtype = "float32")
-    index = -1
+    ordered_corners = np.zeros((4, 2), dtype = "float32")
+    current_index = -1
     
-    # Top Left Corner -> smallest sum
+    # Top Left Corner has smallest sum of coordinates
     for i in range(len(corners)):
-        temp_sum = corners[i][0] + corners[i][1]
-        if temp_sum < max_sum:
-            max_sum = temp_sum
-            index = i
-    rect[0] = corners[index]
-    corners = np.delete(corners, index, 0)
+        coordinate_sum = corners[i][0] + corners[i][1]
+        if coordinate_sum < max_sum:
+            max_sum = coordinate_sum
+            current_index = i
+    ordered_corners[0] = corners[current_index]
+    corners = np.delete(corners, current_index, 0)
     
-    # Bottom Rigth -> biggest sum 
+    # Bottom Right Corner has biggest sum of coordinates
     for i in range(len(corners)):
-        temp_sum = corners[i][0] + corners[i][1]
-        if temp_sum > min_sum:
-            min_sum = temp_sum
-            index = i
-    rect[2] = corners[index]
-    corners = np.delete(corners, index, 0)
+        coordinate_sum = corners[i][0] + corners[i][1]
+        if coordinate_sum > min_sum:
+            min_sum = coordinate_sum
+            current_index = i
+    ordered_corners[2] = corners[current_index]
+    corners = np.delete(corners, current_index, 0)
     
+    # Of remaining two: larger x is top-right, smaller x is bottom-left
     if(corners[0][0] > corners[1][0]):
-        rect[1] = corners[0]
-        rect[3] = corners[1]
-        
+        ordered_corners[1] = corners[0]
+        ordered_corners[3] = corners[1]
     else:
-        rect[1] = corners[1]
-        rect[3] = corners[0]
+        ordered_corners[1] = corners[1]
+        ordered_corners[3] = corners[0]
 
-    rect = rect.reshape(4,2)
-    return rect
+    ordered_corners = ordered_corners.reshape(4,2)
+    return ordered_corners
 
-def prepare(img_array):
-    new_array = img_array.reshape(-1, 28, 28, 1)
-    new_array = new_array.astype('float32')
-    new_array /= 255
-    return new_array
+def normalize_image_for_model(image_array):
+    """
+    Normalize image array for model prediction.
+    
+    Args:
+        image_array: Image array to normalize
+    
+    Returns:
+        np.ndarray: Normalized array ready for prediction
+    """
+    normalized_array = image_array.reshape(-1, 28, 28, 1)
+    normalized_array = normalized_array.astype('float32')
+    normalized_array /= 255
+    return normalized_array
 
-def image_to_array(array, model):
-    # Create an empty 9x9 grid initialized with zeros
-    grid = create_grid()
+def convert_digit_images_to_sudoku_grid(digit_grid_image, model):
+    """
+    Convert a 252x252 image of 81 digits into a 9x9 Sudoku grid.
+    
+    Recognizes digits using the trained model and populates the grid.
+    
+    Args:
+        digit_grid_image: 252x252 image containing all 81 digits
+        model: Trained digit recognition model
+    
+    Returns:
+        list: 9x9 grid with recognized digits
+    """
+    # Create empty 9x9 grid
+    grid = create_empty_sudoku_grid()
 
-    # Store digits that need to be predicted and their positions
+    # Store digits to predict and their positions
     digits_to_predict = []
-    positions = []
+    grid_positions = []
 
-    # Loop over all 81 cells in the 9x9 grid
+    # Process all 81 cells
     for i in range(9):
         for j in range(9):
-            # Extract the 28x28 image of the current cell
-            digit_img = array[i*28:i*28+28, j*28:j*28+28]
+            # Extract 28x28 cell image
+            cell_image = digit_grid_image[i*28:i*28+28, j*28:j*28+28]
 
-            # Check if the cell contains a digit (not empty)
-            if np.sum(digit_img) > 0:
+            # Check if cell contains a digit
+            if np.sum(cell_image) > 0:
                 # Binarize the image
-                _, digit_img = cv2.threshold(digit_img, 200, 255, cv2.THRESH_BINARY)
+                _, cell_image = cv2.threshold(cell_image, 200, 255, cv2.THRESH_BINARY)
 
-                # Ensure image is in correct format
-                digit_img = digit_img.astype(np.uint8)
+                # Ensure correct format
+                cell_image = cell_image.astype(np.uint8)
 
-                # Center the digit in the image
-                shift_x, shift_y = get_best_shift(digit_img)
-                digit_img = shift(digit_img, shift_x, shift_y)
+                # Center the digit
+                shift_x, shift_y = calculate_centering_shift(cell_image)
+                cell_image = apply_shift(cell_image, shift_x, shift_y)
 
-                # Invert the image (black digit on white background)
-                digit_img = cv2.bitwise_not(digit_img)
+                # Invert image (black digit on white background)
+                cell_image = cv2.bitwise_not(cell_image)
 
-                # Normalize and reshape to (28, 28, 1)
-                digit_img = digit_img.astype('float32') / 255.0
-                digit_img = digit_img.reshape(28, 28, 1)
+                # Normalize and reshape
+                cell_image = cell_image.astype('float32') / 255.0
+                cell_image = cell_image.reshape(28, 28, 1)
 
-                # Add to batch and record its grid position
-                digits_to_predict.append(digit_img)
-                positions.append((i, j))
+                # Add to batch
+                digits_to_predict.append(cell_image)
+                grid_positions.append((i, j))
 
-    # If there are any digits to predict
+    # Batch predict all digits
     if digits_to_predict:
-        # Convert list to array and predict all at once
         batch = np.array(digits_to_predict)
         predictions = model.predict(batch, verbose=0)
 
-        # Assign predictions back to correct grid positions
+        # Assign predictions to grid
         for idx, prediction in enumerate(predictions):
-            i, j = positions[idx]
+            i, j = grid_positions[idx]
             grid[i][j] = np.argmax(prediction) + 1
 
-    # Return the final grid of digits
     return grid
     
-def check_if_is_square(rect):
-    #   A------B
-    #   |      |
-    #   |      |
-    #   D------C
-    A = rect[0]
-    B = rect[1]
-    C = rect[2]
-    D = rect[3]
+def validate_quadrilateral_is_square_like(corner_points):
+    """
+    Validate that a quadrilateral is approximately square-shaped.
     
-    # Calculate vectors
-    AB = B - A
-    AD = D - A
-    BC = C - B
-    DC = C - D
+    Checks that all corners are ~90 degrees and sides are similar length.
+    
+    Args:
+        corner_points: Four corner points [top_left, top_right, bottom_right, bottom_left]
+    
+    Returns:
+        bool: True if square-like, False otherwise
+    """
+    point_A = corner_points[0]
+    point_B = corner_points[1]
+    point_C = corner_points[2]
+    point_D = corner_points[3]
+    
+    # Calculate edge vectors
+    vector_AB = point_B - point_A
+    vector_AD = point_D - point_A
+    vector_BC = point_C - point_B
+    vector_DC = point_C - point_D
     
     # Calculate angles between vectors
-    AB_AD = angle_between_two_vectors(AB, AD)
-    AB_BC = angle_between_two_vectors(AB, BC)
-    BC_DC = angle_between_two_vectors(BC, DC)
-    AD_DC = angle_between_two_vectors(AD, DC)
+    angle_AB_AD = calculate_angle_between_vectors(vector_AB, vector_AD)
+    angle_AB_BC = calculate_angle_between_vectors(vector_AB, vector_BC)
+    angle_BC_DC = calculate_angle_between_vectors(vector_BC, vector_DC)
+    angle_AD_DC = calculate_angle_between_vectors(vector_AD, vector_DC)
     
-    if not (is_approx_90_degrees(AB_AD, 15) and is_approx_90_degrees(AB_BC, 15) and 
-            is_approx_90_degrees(BC_DC, 15) and is_approx_90_degrees(AD_DC, 15)):
+    # Check if all corners are approximately 90 degrees
+    if not (is_angle_approximately_90_degrees(angle_AB_AD, 15) and is_angle_approximately_90_degrees(angle_AB_BC, 15) and 
+            is_angle_approximately_90_degrees(angle_BC_DC, 15) and is_angle_approximately_90_degrees(angle_AD_DC, 15)):
         return False
     
-    # Check if sides have the same length
-    if check_if_sides_are_equals(A, B, C, D, 1.2):
+    # Check if sides have similar length
+    if check_if_quadrilateral_sides_are_similar(point_A, point_B, point_C, point_D, 1.2):
         return False
     
     return True
 
-def create_grid():
-    """ Create an empty 9x9 matrix/grid (filled with 0) """
+def create_empty_sudoku_grid():
+    """
+    Create an empty 9x9 Sudoku grid filled with zeros.
+    
+    Returns:
+        list: 9x9 grid initialized with zeros
+    """
     grid = []
-    for i in range(SIZE):
+    for i in range(GRID_SIZE):
         row = []
-        for j in range(SIZE):
+        for j in range(GRID_SIZE):
             row.append(0)
         grid.append(row)
     return grid
         
-def draw_solution_on_image(img, solved, unsolved):
-    for i in range(SIZE):
-        for j in range(SIZE):
-            if unsolved[i][j] != 0:
+def overlay_solution_on_warped_grid(image, solved_grid, original_grid):
+    """
+    Draw the Sudoku solution on the warped grid image.
+    
+    Only draws digits that were originally empty (zeros in original_grid).
+    
+    Args:
+        image: Warped grid image to draw on
+        solved_grid: Complete solved Sudoku grid
+        original_grid: Original grid with clues (to identify empty cells)
+    
+    Returns:
+        None (modifies image in place)
+    """
+    for i in range(GRID_SIZE):
+        for j in range(GRID_SIZE):
+            if original_grid[i][j] != 0:
                 continue
             else:
-                num = solved[i][j]
-                X = img.shape[0]/9
-                Y = img.shape[1]/9
-                x_pos = X*i + X/2
-                y_pos = Y*j + Y/2
-                cv2.putText(img, str(num), (int(y_pos)-5,int(x_pos)+10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2) 
+                digit_to_draw = solved_grid[i][j]
+                cell_height = image.shape[0]/9
+                cell_width = image.shape[1]/9
+                digit_x_position = cell_height*i + cell_height/2
+                digit_y_position = cell_width*j + cell_width/2
+                cv2.putText(image, str(digit_to_draw), (int(digit_y_position)-5,int(digit_x_position)+10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2) 
     
-def show_digits(digits, colour=255):
-    """ Shows the 81 extracted digits in a matrix/grid format """
-    rows = []
+def create_visualization_grid_from_digits(digit_images):
+    """
+    Create a visualization of all 81 digits in a 9x9 grid format.
+    
+    Args:
+        digit_images: List of 81 digit images (28x28 each)
+    
+    Returns:
+        np.ndarray: Combined 252x252 image showing all digits
+    """
+    grid_rows = []
     for i in range(9):
-        row = np.concatenate(digits[i * 9:((i + 1) * 9)], axis=0)
-        rows.append(row)
-    img_grid = np.concatenate(rows, axis=1)
-    return img_grid
+        row_of_digits = np.concatenate(digit_images[i * 9:((i + 1) * 9)], axis=0)
+        grid_rows.append(row_of_digits)
+    combined_grid = np.concatenate(grid_rows, axis=1)
+    return combined_grid
 
-def extract_and_solve_sudoku(frame, model, old_sudoku):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (9,9), 0)
-    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    max_area, max_contour = find_max_contour(contours)
+def extract_and_solve_sudoku(frame, model, cached_solved_grid):
+    """
+    Main pipeline to detect, extract, solve, and overlay Sudoku puzzle on video frame.
     
-    if max_contour is not None:
-        corners = get_corners_from_contour(max_contour)
-        if corners is not None:
-            corners = corners.reshape(4,2)
-            rect = find_corners_locations(corners)
-            if check_if_is_square(rect):
-                (tl, tr, br, bl) = rect
-                bottom_width = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
-                top_width = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
-                right_height = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
-                left_height = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+    Processing steps:
+    1. Convert to grayscale and apply thresholding
+    2. Find largest contour (likely the Sudoku grid)
+    3. Find and order 4 corners
+    4. Validate it's square-shaped
+    5. Apply perspective transform
+    6. Extract and recognize digits
+    7. Solve the puzzle
+    8. Overlay solution back on original frame
+    
+    Args:
+        frame: Input video frame
+        model: Trained digit recognition model
+        cached_solved_grid: Previously solved grid (to reuse if puzzle unchanged)
+    
+    Returns:
+        tuple: (processed_frame, cached_solved_grid)
+    """
+    grayscale = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(grayscale, (9,9), 0)
+    thresholded = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    contours, _ = cv2.findContours(thresholded, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    puzzle_area, largest_contour = find_largest_contour(contours)
+    
+    if largest_contour is not None:
+        corner_points = approximate_contour_to_polygon(largest_contour)
+        if corner_points is not None:
+            corner_points = corner_points.reshape(4,2)
+            ordered_corners = order_corner_points_clockwise(corner_points)
+            if validate_quadrilateral_is_square_like(ordered_corners):
+                (top_left, top_right, bottom_right, bottom_left) = ordered_corners
+                bottom_width = np.sqrt(((bottom_right[0] - bottom_left[0]) ** 2) + ((bottom_right[1] - bottom_left[1]) ** 2))
+                top_width = np.sqrt(((top_right[0] - top_left[0]) ** 2) + ((top_right[1] - top_left[1]) ** 2))
+                right_height = np.sqrt(((top_right[0] - bottom_right[0]) ** 2) + ((top_right[1] - bottom_right[1]) ** 2))
+                left_height = np.sqrt(((top_left[0] - bottom_left[0]) ** 2) + ((top_left[1] - bottom_left[1]) ** 2))
                 
                 max_width = max(int(bottom_width), int(top_width))
                 max_height = max(int(right_height), int(left_height))
-                rect = np.array([tl, tr, br, bl], dtype='float32')
-                dst = np.array([
+                ordered_corners = np.array([top_left, top_right, bottom_right, bottom_left], dtype='float32')
+                destination_points = np.array([
             		[0, 0],
             		[max_width - 1, 0],
             		[max_width - 1, max_height - 1],
             		[0, max_height - 1]], dtype = "float32")
                 
-                M = cv2.getPerspectiveTransform(rect, dst)
-                warped = cv2.warpPerspective(frame, M, (max_width, max_height))
-                #cv2.imshow("Game Area", warped)
-                warped_copy = warped.copy()
-                squares = infer_grid(warped_copy)
-                digits = get_digits(warped_copy, squares, 28)
-                img_grid = show_digits(digits)
-                #cv2.imshow("Digits Grid", img_grid)
-                grid = image_to_array(img_grid, model)
-                unsolved_grid = [r.copy() for r in grid]
+                perspective_transform = cv2.getPerspectiveTransform(ordered_corners, destination_points)
+                warped_grid = cv2.warpPerspective(frame, perspective_transform, (max_width, max_height))
+                warped_grid_copy = warped_grid.copy()
+                cell_rectangles = calculate_cell_boundaries(warped_grid_copy)
+                digit_images = extract_all_digits_from_grid(warped_grid_copy, cell_rectangles, 28)
+                digit_grid_visualization = create_visualization_grid_from_digits(digit_images)
+                recognized_grid = convert_digit_images_to_sudoku_grid(digit_grid_visualization, model)
+                original_clues_grid = [row.copy() for row in recognized_grid]
                 
-                # Sudoku Puzzle 
-                if(max_area > 65000):
-                    if(np.count_nonzero(unsolved_grid) >= 17): # there must be at least 17 clues in order for a Sudoku Board to have a unique solution.
-                        if (old_sudoku is not None):
-                            if(Solver.is_solved(old_sudoku)):
-                                draw_solution_on_image(warped_copy, old_sudoku, unsolved_grid)
+                # Process Sudoku puzzle
+                if(puzzle_area > 65000):
+                    if(np.count_nonzero(original_clues_grid) >= 17):
+                        if (cached_solved_grid is not None):
+                            if(Solver.is_solved(cached_solved_grid)):
+                                overlay_solution_on_warped_grid(warped_grid_copy, cached_solved_grid, original_clues_grid)
                         else:
-                            _, grid = Solver.solve_sudoku(grid)
-                            if(Solver.is_solved(grid)):
-                                draw_solution_on_image(warped_copy, grid, unsolved_grid)
-                                old_sudoku = [r.copy() for r in grid]
+                            _, solved_grid = Solver.solve_sudoku(recognized_grid)
+                            if(Solver.is_solved(solved_grid)):
+                                overlay_solution_on_warped_grid(warped_grid_copy, solved_grid, original_clues_grid)
+                                cached_solved_grid = [row.copy() for row in solved_grid]
                     else:
                         return frame, None
                 
-                    result_sudoku = cv2.warpPerspective(warped_copy, M, (frame.shape[1], frame.shape[0])
+                    warped_solution = cv2.warpPerspective(warped_grid_copy, perspective_transform, (frame.shape[1], frame.shape[0])
                                             , flags=cv2.WARP_INVERSE_MAP)
-                    result = np.where(result_sudoku.sum(axis=-1,keepdims=True)!=0, result_sudoku, frame)
+                    result_frame = np.where(warped_solution.sum(axis=-1,keepdims=True)!=0, warped_solution, frame)
                     
-                    # Draw the 4 corners of the Sudoku puzzle
-                    cv2.circle(result, (int(rect[0][0]), int(rect[0][1])), 5, (0,0,255), 5)
-                    cv2.circle(result, (int(rect[1][0]), int(rect[1][1])), 5, (0,0,255), 5)
-                    cv2.circle(result, (int(rect[2][0]), int(rect[2][1])), 5, (0,0,255), 5)
-                    cv2.circle(result, (int(rect[3][0]), int(rect[3][1])), 5, (0,0,255), 5)
+                    # Draw corner markers
+                    cv2.circle(result_frame, (int(ordered_corners[0][0]), int(ordered_corners[0][1])), 5, (0,0,255), 5)
+                    cv2.circle(result_frame, (int(ordered_corners[1][0]), int(ordered_corners[1][1])), 5, (0,0,255), 5)
+                    cv2.circle(result_frame, (int(ordered_corners[2][0]), int(ordered_corners[2][1])), 5, (0,0,255), 5)
+                    cv2.circle(result_frame, (int(ordered_corners[3][0]), int(ordered_corners[3][1])), 5, (0,0,255), 5)
                     
-                    # Draw the contour of the Sudoku puzzle
-                    cv2.drawContours(result, [max_contour], 0,  (0,255,0), 3)
+                    # Draw contour outline
+                    cv2.drawContours(result_frame, [largest_contour], 0,  (0,255,0), 3)
                 
-                    return result, old_sudoku
+                    return result_frame, cached_solved_grid
                 else:
                     return frame, None
             else:
