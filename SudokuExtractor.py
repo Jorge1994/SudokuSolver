@@ -234,9 +234,11 @@ def extract_digit_from_cell(image, cell_rectangle, digit_size):
     """
     digit_image = extract_rectangle_region(image, cell_rectangle)
 
-    # Find largest feature in center region where digit should be
+    # Find largest feature in center region where digit should be.
+    # Divisor of 4.0 gives a wider scan area (~39px vs ~17px for a 77px cell),
+    # which improves detection of narrow digits like 1 and 7.
     height, width = digit_image.shape[:2]
-    margin = int(np.mean([height, width]) / 2.5)
+    margin = int(np.mean([height, width]) / 4.0)
     bounding_box = find_largest_connected_component(digit_image, [margin, margin], [width - margin, height - margin])
     digit_image = extract_rectangle_region(digit_image, bounding_box)
 
